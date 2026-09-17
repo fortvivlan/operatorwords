@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Local research material and agent instructions
+/data/
+/AGENTS.md
