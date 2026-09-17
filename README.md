@@ -45,9 +45,10 @@ The source language is Russian. The target languages are:
 
 The planned systems are:
 
-- **Google Translate** — collected through the official Google Cloud
-  Translation API and its Python client, subject to credentials, quotas, and
-  billing.
+- **Google Translate** — collected through the unofficial `googletrans` web
+  client because a paid Google Cloud account is not available. The exact client
+  version, endpoint, failures, and collection timestamps are retained because
+  this route is less stable than the official API.
 - **Yandex Translate** — an official Yandex Cloud API exists, but it requires
   Cloud authentication; outputs may instead be collected manually if a
   suitable no-cost API route is unavailable.
@@ -62,13 +63,26 @@ The planned systems are:
   is 55 languages, so unsupported project languages must be recorded explicitly
   rather than silently substituted.
 
-All project code should be Python (`.py`). Prefer a project-local virtual
-environment managed with [uv](https://docs.astral.sh/uv/). Raw source documents,
-translations, credentials, and generated experiment data belong under `data/`,
-which is intentionally excluded from Git. API secrets must be supplied through
-environment variables and never committed.
 
-For reproducibility, each result should preserve the source sentence and stable
-ID, target language, provider, exact model/version where exposed, prompt or API
-settings, raw output, collection timestamp, and any error or unsupported-language
-status.
+## Collecting Google Translate output
+
+The Google Translate collector uses the unofficial `googletrans` web client so
+that it does not require a paid Cloud account. Install the locked environment and
+start the run from PowerShell in the repository root:
+
+```powershell
+uv sync --locked
+uv run python scripts/collect_googletrans.py
+```
+
+Each sentence is submitted in a separate request, with a random delay of 7–9
+seconds between requests. Progress is appended to
+`data/googletrans-4.0.0rc1-20260917-v1.jsonl`, and the resumable derived table is
+written to `data/google_translate.csv`. Ossetian is omitted because `googletrans`
+does not support it.
+
+You can stop safely with Ctrl+C. Run the same command to resume; successful
+sentence/language pairs are not requested again. If Google returns HTTP 403 or
+429, the script stops immediately. Wait several hours (or longer) and run the
+same command again. Do not change the run ID, service URL, inputs, delay range,
+or retry policy while resuming the same run.

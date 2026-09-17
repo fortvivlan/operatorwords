@@ -1,0 +1,8 @@
+[project]
+name = "operatorwords"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "googletrans==4.0.0rc1",
+    "python-docx>=1.2.0",
+]
