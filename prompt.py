@@ -1,0 +1,1 @@
+prompt = "Translate the Russian sentence '' in the following languages: English, German, Bulgarian, Swedish, Danish, Icelandic, Ossetian, Arabic, Norwegian, Finnish, Hindi. Give the translations in one line separated with tabulation."
