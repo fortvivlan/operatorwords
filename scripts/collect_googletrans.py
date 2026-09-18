@@ -46,8 +46,16 @@ DEFAULT_SERVICE_URL = "translate.google.com"
 CLEAR_TERMINAL_LINE = "\r\033[2K"
 
 
-class ProviderBlockedError(RuntimeError):
+class CollectionPausedError(RuntimeError):
+    """Stop the run for an external condition that should be retried later."""
+
+
+class ProviderBlockedError(CollectionPausedError):
     """Stop the whole run when the Google web endpoint blocks requests."""
+
+
+class TransientNetworkError(CollectionPausedError):
+    """Stop the run when DNS fails before a request reaches the provider."""
 
 
 @dataclass(frozen=True)
@@ -176,6 +184,10 @@ def build_manifest(
         "retry_policy": {
             "maximum_attempts_per_sentence_language": max_attempts,
             "applies_uniformly": True,
+            "pre_request_network_behavior": (
+                "stop immediately on a DNS resolution failure; the failed call does "
+                "not consume the provider-attempt limit; resume the same run later"
+            ),
             "provider_block_behavior": (
                 "stop immediately on HTTP 403 or 429; blocked attempts do not "
                 "consume the retry limit; resume the same run later"
@@ -255,13 +267,22 @@ def capped_failure_counts(
     """Count failures that consume the per-pair attempt limit."""
     counts: dict[tuple[str, str], int] = {}
     for record in records:
-        if record["status"] != "failed" or not record.get(
-            "counts_toward_max_attempts", True
-        ):
+        if record["status"] != "failed" or not failure_counts_toward_limit(record):
             continue
         key = (record["sentence_id"], record["target_code"])
         counts[key] = counts.get(key, 0) + 1
     return counts
+
+
+def failure_counts_toward_limit(record: dict[str, Any]) -> bool:
+    """Return whether a recorded failure represents a provider attempt.
+
+    Older records marked DNS failures as counted. Reclassify those records while
+    retaining them verbatim in the append-only JSONL log.
+    """
+    if not record.get("counts_toward_max_attempts", True):
+        return False
+    return "Temporary failure in name resolution" not in (record.get("error") or "")
 
 
 def write_csv(
@@ -402,6 +423,9 @@ async def collect(
                     provider_blocked = any(
                         status in str(error) for status in ("403", "429")
                     )
+                    dns_unavailable = "Temporary failure in name resolution" in str(
+                        error
+                    )
                     record = {
                         "run_id": run_id,
                         "sentence_id": source.sentence_id,
@@ -422,14 +446,17 @@ async def collect(
                         "response_received_at_utc": utc_now(),
                         "status": "failed",
                         "error": f"{type(error).__name__}: {error}",
-                        "counts_toward_max_attempts": not provider_blocked,
+                        "counts_toward_max_attempts": not (
+                            provider_blocked or dns_unavailable
+                        ),
                         "raw_output": None,
                         "response_metadata": None,
                     }
                     append_record(raw_path, record)
                     attempts[key] = attempt
                     if not provider_blocked:
-                        capped_failures[key] = capped_failures.get(key, 0) + 1
+                        if not dns_unavailable:
+                            capped_failures[key] = capped_failures.get(key, 0) + 1
                     if provider_blocked:
                         clear_status()
                         print(
@@ -442,6 +469,19 @@ async def collect(
                         raise ProviderBlockedError(
                             "Google blocked the web request; the run stopped without "
                             "attempting later sentence-language pairs"
+                        ) from error
+                    if dns_unavailable:
+                        clear_status()
+                        print(
+                            f"NETWORK UNAVAILABLE attempt {attempt}: "
+                            f"{source.sentence_id} -> {column}: {error}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                        write_csv(csv_path, sources, outputs)
+                        raise TransientNetworkError(
+                            "DNS resolution failed before reaching Google; the run "
+                            "stopped and can be resumed later"
                         ) from error
                     clear_status()
                     print(
@@ -522,7 +562,7 @@ async def async_main() -> int:
             args.delay_max,
             args.max_attempts,
         )
-    except ProviderBlockedError as error:
+    except CollectionPausedError as error:
         print(str(error), file=sys.stderr)
         return 2
 

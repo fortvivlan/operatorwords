@@ -11,6 +11,7 @@ from scripts.collect_googletrans import (
     ProviderBlockedError,
     TARGETS,
     SourceSentence,
+    capped_failure_counts,
     collect,
     print_status,
     read_sources,
@@ -70,6 +71,20 @@ class SourceTests(unittest.TestCase):
 
 
 class CollectionTests(unittest.IsolatedAsyncioTestCase):
+    def test_legacy_dns_failures_do_not_exhaust_attempt_limit(self) -> None:
+        records = [
+            {
+                "sentence_id": "dere-038",
+                "target_code": "hi",
+                "status": "failed",
+                "counts_toward_max_attempts": True,
+                "error": "ConnectError: [Errno -3] Temporary failure in name resolution",
+            }
+            for _ in range(3)
+        ]
+
+        self.assertEqual(capped_failure_counts(records), {})
+
     async def test_collects_one_sentence_per_call_and_resumes(self) -> None:
         sources = [SourceSentence("dicto-001", "dicto", "Вася ошибся.")]
         client = FakeTranslator()
